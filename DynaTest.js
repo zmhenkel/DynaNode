@@ -1,4 +1,4 @@
-var DynaNode = require("./DynaNode");
+var DynaNode = require("./dynanode");
 
 console.log("--start program--");
 

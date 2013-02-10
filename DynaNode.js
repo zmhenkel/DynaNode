@@ -17,7 +17,7 @@ DynaNode.Requires.ChildProcess = require("child_process");
 
 //Workers (for serialport)
 DynaNode.Workers = DynaNode.Workers || {};
-DynaNode.Workers.SerialPort = "DynaSerialWorker.js";
+DynaNode.Workers.SerialPort = "./DynaSerialWorker.js";
 
 //Represents a Register (Address & Size in Bytes)
 DynaNode.Register = function(registerID,byteLength) {
