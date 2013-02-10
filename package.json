@@ -1,0 +1,15 @@
+{
+	"name" : "DynaNode",
+	"version" : "0.0.1",
+	"author" : "Zachary Henkel",
+	"description" : "Node.js library for Dynamixel motors",
+	"keywords" : ["Dynamixel","Robotics","Servos"],
+	"repository" : {
+		"type" : "git",
+		"url"  : "https://github.com/zmhenkel/DynaNode.git"
+	},
+	"dependencies" : {
+		"serialport" : ">=1.0.8"
+	},
+	"main" : "./DynaNode"
+}
