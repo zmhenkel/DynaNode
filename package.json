@@ -1,5 +1,5 @@
 {
-	"name" : "DynaNode",
+	"name" : "dynanode",
 	"version" : "0.0.1",
 	"author" : "Zachary Henkel",
 	"description" : "Node.js library for Dynamixel motors",
