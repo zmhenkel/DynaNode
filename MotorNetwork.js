@@ -67,7 +67,7 @@ var MotorNetwork = function(portName,baudRate) {
 					i--;
 				}
 			};
-			self.emit("motorRemoved",{id:m.motor.getID()});	
+			self.emit("motorRemoved",{id:m.motor});	
 		}
 		
 		if(m.action === "statUpdate") {

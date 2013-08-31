@@ -15,7 +15,7 @@ var now = function() {
 function Register(name,address,numBytes,freq,motorid) {
 	this.name = name;
 	this.address = address;
-	this.numBytes = 1;
+	this.numBytes = numBytes;
 	this.value = -1;
 	this.frequency = freq;
 	this.lastQueryTime = 0;
@@ -342,6 +342,7 @@ process.on("message",function(m){
 					} else {
 							
 					}
+					mainLoop();
 				}
 				
 				//Handle Data Responses

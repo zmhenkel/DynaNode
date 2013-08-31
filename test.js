@@ -13,6 +13,9 @@ ms.on("motorAdded",function(d) {
 	d.motor.on("valueUpdated",function(m){
 		console.log("value updated: "+d.motor.getID()+" "+m.name+":"+m.value);
 	});
+	console.log(d.motor.setRegisterValue("torqueEnable",0));
+	//console.log(d.motor.setRegisterValue("movingSpeed",10));
+	//console.log(d.motor.setRegisterValue("goalPosition",1023));
 	console.log("motor added "+d.motor.getID());
 });
 
