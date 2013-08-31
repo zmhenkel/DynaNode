@@ -1,29 +1,32 @@
-/*
-
-	INPUTS 
-	init
-	
-	STATIC
-	listPorts		[Ports]
-	
-	OUTPUTS
-	getPortName		[PortName]
-	isConnected		[Connected]
-	
-	EVENTS
-	ready
-	motorAdded		[Motor]
-	motorRemoved	[MotorID]
-	valueUpdated	[MotorID] [Address] [Value]
-	terminated
-
-*/
+/*	MotorNetwork.js - used by MotorSystem.js, Motor.js
+ *	
+ *	Events:
+ *		- motorAdded	[Motor Object]
+ *		- motorRemoved	[Motor ID]
+ *		- valueUpdated / frequencyUpdated (custom channels for each motor)
+ *		- terminated
+ *
+ *	Methods:
+ *		- constructor		[portName] [baudRate]
+ *		- init					
+ *		- setRegister		[motorID] [address] [numBytes] [value]
+ *		- setRefreshRate	[motorID] [address] [frequency]
+ *		- getMotors			[[Motor,..,Motor]]
+ *		- terminate
+ *
+ *	Static Methods:
+ *		- listPorts		[callBack]
+ *
+ *	SEE Motor.js for details of Motor events and methods.
+ *	
+ *	USAGE: 	Used internally by MotorSystem.js and Motor.js
+ *			Static method listPorts provides list of COM ports.
+ */
 var worker = "./MotorNetworkWorker.js";
 var util = require("util");
 var events = require("events");
 var child_process = require("child_process");
 var serialport = require("serialport");
-var Logger = require("./Logger");
 var Motor = require("./Motor");
 
 var MotorNetwork = function(portName,baudRate) {
@@ -63,7 +66,8 @@ var MotorNetwork = function(portName,baudRate) {
 					motors.splice(i,1);
 					i--;
 				}
-			};	
+			};
+			self.emit("motorRemoved",{id:m.motor.getID()});	
 		}
 		
 		if(m.action === "statUpdate") {

@@ -1,3 +1,7 @@
+/* Alarms.js - converts alarm byte to error codes.
+ *
+ */
+
 var Alarms = {};
 
 Alarms.InputVoltageError 	= 0x01;

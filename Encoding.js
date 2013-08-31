@@ -1,5 +1,10 @@
-var Alarms = require("./Alarms");
+/* Encoding.js - represents Dynamixel encodings of registers
+ *
+ * USAGE: used to convert from native Dynamixel values to
+ * human-readable quantities. 
+ */
 
+var Alarms = require("./Alarms");
 
 var Encoding = {};
 Encoding.Default 			= 0x01;

@@ -1,25 +1,24 @@
+/*	test.js - Test Program for DynaNode (console app)
+ *	
+ */
+
 console.log("start test program");
 var MotorSystem = require("./MotorSystem");
 
 var ms = new MotorSystem();
+ms.addToBlackList("/dev/tty.Bluetooth-PDA-Sync");
+ms.addToBlackList("/dev/tty.Bluetooth-Modem");
 
 ms.on("motorAdded",function(d) {
 	d.motor.on("valueUpdated",function(m){
-		//console.log("value updated: "+d.motor.getID()+" "+m.name+":"+m.value);
+		console.log("value updated: "+d.motor.getID()+" "+m.name+":"+m.value);
 	});
 	console.log("motor added "+d.motor.getID());
 });
 
-ms.on("networkAdded",function(n) {
-	console.log("network added - "+n.name);
-});
+ms.init();
 
-ms.on("networkRemoved",function(n) {
-	console.log("network removed - "+n.name);
-});
-
-
-setTimeout(function() {
+process.on('SIGINT', function() {
 	console.log("shutdown command");
 	ms.terminate();
-},20000);
+});

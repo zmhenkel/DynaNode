@@ -1,23 +1,13 @@
-/*
-	Input:
-		-init					[PortName] [BaudRate]
-		-updateReadFrequency	[MotorID] [RegisterAddress] [freq]
-		-writeRegister			[MotorID] [RegisterAddress] [numBytes] [value]
-		-shutdown
-	
-	Output:
-		-opened
-		-valueUpdate			[MotorID] [RegisterAddress] [value]
-		-errorEncountered		[MotorID] [ErrorCode]
-		-motorAdded				[MotorID] [Register Names / Frequencies]
-		-motorRemoved			[MotorID]
-		-terminated
-		
-	//Reliable Reads
-*/
+/*	MotorNetworkWorker.js - internal child process for
+ *	monitoring Dynamixel networks and sending updates.
+ *
+ *
+ *	NOTE: This implementation uses several internal representations
+ *	of objects instead of using the descriptions from other files.
+ * 	These are somewhat optimized versions to help with limiting overhead.
+ */
 
 
-var Logger = require("./Logger");
 var now = function() {
 	return (new Date()).getTime();
 };

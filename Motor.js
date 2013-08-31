@@ -1,3 +1,26 @@
+/*	Motor.js - objects distributed by MotorSystem.js
+ *	
+ *	Events:
+ *		- valueUpdated		{registerName,value}
+ *		- frequencyUpdated	{registerName,frequency}
+ *		- terminated	
+ *
+ *	Methods:
+ *		- constructor				[motorID] [network] [regPairs]
+ *		- getID						{id}
+ *		- listRegisters				[[{name,value,frequency}...{}]]
+ *		- getRegister				{decodedValue,rawValue,encoding,frequency}
+ *		- setRegisterValue			[regName] [encodedValue]
+ *		- setRegisterRefreshRate
+ *		- getNetworkName			{comPortName}
+ *		- terminate
+ *	
+ *	USAGE: 	Subscribe to event "valueUpdated" to receive motor updates
+ *			Use setRegisterValue to write to motor registers 	
+ *			
+ *	NOTE:	Be sure to use encoded / decoded values where requested.
+ */
+
 var util = require("util");
 var events = require("events");
 var Encoding = require("./Encoding");
@@ -65,7 +88,7 @@ var Motor = function(motorID,network,regPairs) {
 	this.listRegisters = function() {
 		var regs = [];
 		for(var i=0; i<registers.length; i++) {
-			regs.push(registers[i].name);
+			regs.push({name:registers[i].name,value:registers[i].value,frequency:registers[i].frequencyMS});
 		}
 		return regs;
 	};
@@ -75,7 +98,8 @@ var Motor = function(motorID,network,regPairs) {
 		for(var i=0; i<registers.length; i++) {
 			if(registers[i].name === regName) {
 				var r = registers[i];
-				return {value:r.value,encoding:r.encoding, frequency:r.frequencyMS};
+				var dv = Encoding.toNumber(registers[i].encoding,registers[i].value);
+				return {decodedValue:dv,rawValue:r.value,encoding:r.encoding, frequency:r.frequencyMS};
 			}
 		}
 		return {};
