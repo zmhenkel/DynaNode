@@ -77,6 +77,18 @@ DynaNode.Instruction.WRITE_DATA = 0x03;
 //Dynamixel Model Numbers
 DynaNode.ModelNumbers = DynaNode.ModelNumbers || {};
 DynaNode.ModelNumbers.AX12 = 12;
+DynaNode.ModelNumbers.RX64 = 64;
+DynaNode.ModelNumbers.MX64 = 54;
+DynaNode.ModelNumbers.EX106 = 107;
+DynaNode.ModelNumbers.DX113 = 113;
+DynaNode.ModelNumbers.DX116 = 116;
+DynaNode.ModelNumbers.DX117 = 117;
+DynaNode.ModelNumbers.AX18 = 18;
+DynaNode.ModelNumbers.RX10 = 10;
+DynaNode.ModelNumbers.RX24 = 24;
+DynaNode.ModelNumbers.RX28 = 28;
+DynaNode.ModelNumbers.MX28 = 29;
+DynaNode.ModelNumbers.MX106 = 320;
 
 //Dynamixel Status Return Levels
 DynaNode.StatusReturnLevels = DynaNode.StatusReturnLevels || {};
@@ -531,9 +543,9 @@ DynaNode.DynamixelNetwork = function(portName,startRange,endRange,timeout){
 	DynaNode.Requires.Events.EventEmitter.call(this);
 	port = DynaNode.Requires.ChildProcess.fork(DynaNode.Workers.SerialPort);
 	
-		
+	console.log("start scanner");	
 	port.on("message",function(m){
-
+		console.log(m.action);
 		if(m.action === "open") {
 			portOpened = true;
 			that.emit("portOpened");
