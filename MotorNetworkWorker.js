@@ -7,7 +7,7 @@
  * 	These are somewhat optimized versions to help with limiting overhead.
  */
 
-
+var Logger = require("./Logger");
 var now = function() {
 	return (new Date()).getTime();
 };
@@ -18,17 +18,17 @@ function Register(name,address,numBytes,freq,motorid) {
 	this.numBytes = numBytes;
 	this.value = null;
 	this.frequency = freq;
-	this.lastQueryTime = 0;
-	this.motorID = motorid;
+	this.lastQueryTime = -1*freq;
+	this.motorID = parseInt(""+motorid);
 	this.readBytes = new Buffer(8,'hex');
 	this.readBytes.writeUInt8(0xFF,0);
 	this.readBytes.writeUInt8(0xFF,1);
-	this.readBytes.writeUInt8(motorid,2);
+	this.readBytes.writeUInt8(this.motorID,2);
 	this.readBytes.writeUInt8(0x04,3)
 	this.readBytes.writeUInt8(0x02,4);
 	this.readBytes.writeUInt8(address,5);
 	this.readBytes.writeUInt8(numBytes,6);
-	this.readBytes.writeUInt8((-1*(motorid+0x04+0x02+address+numBytes+1)) & 255,7)
+	this.readBytes.writeUInt8((-1*(this.motorID+0x04+0x02+address+numBytes+1)) & 255,7)
 };
 
 function Motor(id) {
@@ -51,6 +51,7 @@ var terminated = false;
 var dataAnalysis = false;
 var requests = 0;
 var hits = 0;
+var lastSendTime = 0;
 
 var blockingRegister = null;
 var timeoutThread = null;
@@ -96,16 +97,26 @@ var Send = function(msg) {
 	}
 };
 
+var writePort = function(msg) {
+	var td = now() - lastSendTime;
+	while(td < 4) {
+		td = now() - lastSendTime;	
+	}
+	port.write(msg);
+	lastSendTime = now();
+}
+
 statLoop = setInterval(function() {
 	Send({action:"statUpdate",requests:requests,hits:hits});
 },5000);
 
+var mout = false;
 motorRemoveThread = setInterval(function(){
 	
 	for(var i=0; i<motors.length; i++) {
 		var currentTime = now();
-		if(motors[i].model!== null && (currentTime - motors[i].lastContact) > 1000) {
-			
+		if( (currentTime - motors[i].lastContact) > 1000) {
+			mout = true;
 			var motorID = motors[i].id;
 			
 			//Remove All Registers
@@ -156,29 +167,51 @@ var removeBufferGarbage = function(buff) {
 
 var extractPacket = function(buff) {
 
-	if(buff.length < 6) {
+	runningBuffer = removeBufferGarbage(runningBuffer);
+	if(runningBuffer.length < 6) {
 		return null;
 	}
 
 	//3+len+1 =
 	//var len = (5+ (buff[3] - 2));
-	var len = 3 + buff[3] +1;
+	var len = 3 + runningBuffer[3] +1;
 	if(len > 16) {
-		runningBuffer = new Buffer(0,'hex');
-		return null;
+		Logger.log("> 16 length!");
+		Logger.log(runningBuffer.toString('hex')+" .. "+runningBuffer.length);
+		var nb = new Buffer(runningBuffer.length-1,'hex');
+		runningBuffer.copy(nb,0,1,runningBuffer.length);
+		runningBuffer = nb;
+		runningBuffer = removeBufferGarbage(runningBuffer);		
+		return extractPacket(runningBuffer);
 	}
 	
-	if(buff.length < len) {
+	if(runningBuffer.length < len) {
 		return null;
 	}
 	
 	
 	
 	var retb = new Buffer(len,'hex');
-	buff.copy(retb,0,0,len);
+	runningBuffer.copy(retb,0,0,len);
+	
+	var nrb = new Buffer(runningBuffer.length-retb.length);
+	runningBuffer.copy(nrb,0,retb.length,runningBuffer.length);
+	runningBuffer = nrb;
+	
 	return retb;	
 };
 
+function createTimeout(register) {
+	timeoutThread = setTimeout(function(){
+		if(blockingRegister === register) {
+			blockingRegister.lastQueryTime = -.5*blockingRegister.frequency;
+			blockingRegister = null;
+			mainLoop();
+		}
+	},32);
+};
+
+var prevWrite = "";
 var mainLoop = function() {
 	
 	if(blockingRegister !== null)
@@ -195,14 +228,10 @@ var mainLoop = function() {
 		requests++;
 		blockingRegister = registers[0];
 		//console.log(blockingRegister.motorID+":"+blockingRegister.name)
-		port.write(blockingRegister.readBytes);
-		blockingRegister.lastQueryTime = now();
+		prevWrite = "WRITE: "+blockingRegister.readBytes.toString('hex');
+		writePort(blockingRegister.readBytes);
 		clearTimeout(timeoutThread);
-		timeoutThread = setTimeout(function(){
-			blockingRegister.lastQueryTime = 0;
-			blockingRegister = null;
-			mainLoop();	
-		},32);
+		createTimeout(registers[0]);
 	}
 };
 
@@ -287,7 +316,7 @@ process.on("message",function(m){
 			pingLoop = setInterval(function(){
 				//Look For Motors
 				if(port!== null) {
-					port.write(pingBytes);
+					writePort(pingBytes);
 				}
 			},1000);
 			
@@ -303,16 +332,11 @@ process.on("message",function(m){
 			
 			
 			//Remove Garbage From Buffer
-			runningBuffer = removeBufferGarbage(runningBuffer);
+			//runningBuffer = removeBufferGarbage(runningBuffer);
 			//While Packets(Extract Packet From Buffer)
 			var packet = extractPacket(runningBuffer);
 			
 			while(packet !== null) {
-				
-				var nrb = new Buffer(runningBuffer.length-packet.length);
-				runningBuffer.copy(nrb,0,packet.length,runningBuffer.length);
-				runningBuffer = nrb;
-				
 				
 				//Handle PING Responses
 				if(packet.length === 6) {
@@ -320,21 +344,33 @@ process.on("message",function(m){
 					//Status Response Packet
 					if(packet[3] === 0x00) {
 						console.log("status return packet");
+						packet = extractPacket(runningBuffer);
 						continue;
 					}
 					
 					
 					var theID = packet[2];
 					var exist = false;
+					var existing = null;
 					for(var i=0; i<motors.length; i++) {
 						if(motors[i].id === theID) {
 							exist = true;
+							existing = motors[i];
 							motors[i].lastContact = now();
 							break;
 						}
 					}
 					
+					if(mout)
+						Logger.log("ping response - "+theID);
+					
 					if(!exist) {
+						if(theID > 254 || theID<1) {
+							packet = extractPacket(runningBuffer);
+							continue;
+						}
+					
+						Logger.log("***** NEW MOTOR ******"+theID);
 						//Add Motor + Notify
 						var mtr = new Motor(theID);
 						motors.push(mtr);
@@ -350,7 +386,10 @@ process.on("message",function(m){
 						Send({action:"motorEncountered",motor:theID});
 						
 					} else {
-							
+						if(mout) {
+							Logger.log("already exists? "+theID+" wmodel: "+existing.model);
+							Logger.log(prevWrite);
+							}				
 					}
 					mainLoop();
 				}
@@ -367,9 +406,10 @@ process.on("message",function(m){
 					var error = packet.readUInt8(indx++);
 					
 					var data = 0;
-					if(len==1)
+					if(len==1) {
 						data = packet.readUInt8(indx++);
 						rsum += data;
+					}
 					if(len==2) {
 						data = packet.readUInt16LE(indx);
 						rsum += packet[indx];
@@ -382,6 +422,7 @@ process.on("message",function(m){
 					
 					if(checksum === rsum) {
 						hits++;
+						blockingRegister.lastQueryTime = now();
 						//Valid Data
 						var mtr = null;
 						for(var i=0; i<motors.length; i++) {
@@ -392,6 +433,12 @@ process.on("message",function(m){
 						}
 						
 						if(mtr !== null) {
+							
+							if(mtr.id !== blockingRegister.motorID) {
+								Logger.log("ids don't match - expecting:"+blockingRegister.motorID);
+								Logger.log(packet.toString('hex'));
+								Logger.log(prevWrite);
+							}
 							
 							var currentRead = blockingRegister;
 							
@@ -434,8 +481,9 @@ process.on("message",function(m){
 							//Process Next Read
 							mainLoop();
 						} else {
-							//console.log("motor is null!");
-							blockingRegister.lastQueryTime = 0;
+						
+							Logger.log("motor is null!");
+							blockingRegister.lastQueryTime = -1*blockingRegister.frequency;
 							clearTimeout(timeoutThread);
 							blockingRegister = null;
 							mainLoop();
@@ -443,9 +491,11 @@ process.on("message",function(m){
 						
 						
 					} else {
+						Logger.log("INVALID!");
+						Logger.log(packet.toString('hex')+" expect "+rsum);
 						//INVALID
 						//console.log("invalid!");
-						blockingRegister.lastQueryTime = 0;
+						blockingRegister.lastQueryTime = -1*blockingRegister.frequency;
 						clearTimeout(timeoutThread);
 						blockingRegister = null;
 						mainLoop();
@@ -514,7 +564,7 @@ process.on("message",function(m){
 		buff.writeUInt8((-1*(m.motorID+3+m.numBytes+0x03+m.address+data+1)) & 255,indx++);
 		
 		if(port!==null) {
-			port.write(buff);
+			writePort(buff);
 		}
 		
 		var mtr = null;

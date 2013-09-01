@@ -22,7 +22,7 @@
  *	USAGE: 	Used internally by MotorSystem.js and Motor.js
  *			Static method listPorts provides list of COM ports.
  */
-var worker = "./MotorNetworkWorker.js";
+var worker = "./MotorNetworkWorker2.js";
 var util = require("util");
 var events = require("events");
 var child_process = require("child_process");
@@ -39,6 +39,27 @@ var MotorNetwork = function(portName,baudRate) {
 	
 	
 	var childProcess = child_process.fork(worker);
+	
+	childProcess.on("error",function(e) {
+		motors = [];
+		self.emit("terminated",{});
+	});
+	
+	childProcess.on("exit",function(e) {
+		motors = [];
+		self.emit("terminated",{});
+	});
+	
+	childProcess.on("close",function(e){
+		motors = [];
+		self.emit("terminated",{});
+	});
+	
+	childProcess.on("disconnect",function(e) {
+		motors = [];
+		self.emit("terminated",{});
+	});
+	
 	childProcess.on("message",function(m){
 		
 		if(m.action === "opened") {

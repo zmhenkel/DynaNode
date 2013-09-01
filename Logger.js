@@ -5,7 +5,7 @@ var Logger = {};
 Logger.storage = "";
 var fs = require("fs");
 
-Logger.print = false;
+Logger.print = true;
 
 Logger.log = function(msg) {
 	if(Logger.print) {
