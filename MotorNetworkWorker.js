@@ -16,7 +16,7 @@ function Register(name,address,numBytes,freq,motorid) {
 	this.name = name;
 	this.address = address;
 	this.numBytes = numBytes;
-	this.value = -1;
+	this.value = null;
 	this.frequency = freq;
 	this.lastQueryTime = 0;
 	this.motorID = motorid;
@@ -164,7 +164,7 @@ var extractPacket = function(buff) {
 	//var len = (5+ (buff[3] - 2));
 	var len = 3 + buff[3] +1;
 	if(len > 16) {
-		buff = new Buffer(0,'hex');
+		runningBuffer = new Buffer(0,'hex');
 		return null;
 	}
 	
@@ -194,6 +194,7 @@ var mainLoop = function() {
 	if(registers.length >0 && blockingRegister === null) {
 		requests++;
 		blockingRegister = registers[0];
+		//console.log(blockingRegister.motorID+":"+blockingRegister.name)
 		port.write(blockingRegister.readBytes);
 		blockingRegister.lastQueryTime = now();
 		clearTimeout(timeoutThread);
@@ -296,6 +297,7 @@ process.on("message",function(m){
 			dataAnalysis = true;
 			var b = new Buffer(d,'hex');
 			
+			
 			//Concat To Buffer
 			runningBuffer = Buffer.concat([runningBuffer,b]);
 			
@@ -304,6 +306,7 @@ process.on("message",function(m){
 			runningBuffer = removeBufferGarbage(runningBuffer);
 			//While Packets(Extract Packet From Buffer)
 			var packet = extractPacket(runningBuffer);
+			
 			while(packet !== null) {
 				
 				var nrb = new Buffer(runningBuffer.length-packet.length);
@@ -313,6 +316,13 @@ process.on("message",function(m){
 				
 				//Handle PING Responses
 				if(packet.length === 6) {
+					
+					//Status Response Packet
+					if(packet[3] === 0x00) {
+						console.log("status return packet");
+						continue;
+					}
+					
 					
 					var theID = packet[2];
 					var exist = false;
@@ -392,17 +402,17 @@ process.on("message",function(m){
 							blockingRegister = null;
 							mtr.lastContact = now();
 							
-							if(address !== 0x00 && currentRead.value !== data) {
+							if(mtr.model!==null && currentRead.value !== data) {
 								currentRead.value = data;
 								Send({action:"valueUpdated",motor:id,name:name,value:data});
-							} else if(address !== 0x00) {
-								//console.log(id+", "+name+":"+data);
-							}
+							} 
 							
 							//If it's the motor model, load in template
 							if(address === 0x00 && mtr.model=== null) {
 								//Load The Template
+								currentRead.value = data;
 								mtr.readRegisters = getRegisters(data,id);
+								
 								
 								var rr = registers.concat(mtr.readRegisters);
 								registers = rr;	
@@ -413,7 +423,8 @@ process.on("message",function(m){
 										regNames.push({	name:registers[i].name,
 														address:registers[i].address,
 														bytes:registers[i].numBytes,
-														frequency:registers[i].frequency});
+														frequency:registers[i].frequency,
+														value:registers[i].value});
 									}
 								}
 								
@@ -424,12 +435,17 @@ process.on("message",function(m){
 							mainLoop();
 						} else {
 							//console.log("motor is null!");
+							blockingRegister.lastQueryTime = 0;
+							clearTimeout(timeoutThread);
+							blockingRegister = null;
+							mainLoop();
 						}
 						
 						
 					} else {
 						//INVALID
 						//console.log("invalid!");
+						blockingRegister.lastQueryTime = 0;
 						clearTimeout(timeoutThread);
 						blockingRegister = null;
 						mainLoop();
@@ -439,7 +455,7 @@ process.on("message",function(m){
 				
 				packet = extractPacket(runningBuffer);
 			}
-			dataAnalysis = false;	
+			mainLoop();	
 		});
 		
 		port.on("error",function(){

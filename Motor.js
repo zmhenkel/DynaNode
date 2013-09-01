@@ -25,14 +25,14 @@ var util = require("util");
 var events = require("events");
 var Encoding = require("./Encoding");
 
-var MotorRegister = function(name,address,bytes,frequency,encoding) {
+var MotorRegister = function(name,address,bytes,frequency,encoding,value) {
 	var self = this;
 	this.name = name;
 	this.address = address;
 	this.numberOfBytes = bytes;
 	this.frequencyMS = frequency;
 	this.encoding = encoding;
-	this.value = null;
+	this.value = value;
 };
 
 
@@ -49,8 +49,9 @@ var Motor = function(motorID,network,regPairs) {
 		var bytes = regPairs[i].bytes;
 		var frequency = regPairs[i].frequency;
 		var encoding = Encoding.GetEncoding(name);
+		var value = Encoding.toNumber(encoding,regPairs[i].value);
 		
-		registers.push(new MotorRegister(name,address,bytes,frequency,encoding));
+		registers.push(new MotorRegister(name,address,bytes,frequency,encoding,value));
 		
 	}
 	
@@ -59,7 +60,8 @@ var Motor = function(motorID,network,regPairs) {
 		for(var i=0; i<registers.length; i++) {
 			if(registers[i].name === d.name) {
 				registers[i].value = d.value;
-				self.emit("valueUpdated",{name:d.name,value:d.value});
+				var ev = Encoding.toNumber(registers[i].encoding,d.value);
+				self.emit("valueUpdated",{name:d.name,value:ev});
 				break;
 			}
 		}	
@@ -88,7 +90,8 @@ var Motor = function(motorID,network,regPairs) {
 	this.listRegisters = function() {
 		var regs = [];
 		for(var i=0; i<registers.length; i++) {
-			regs.push({name:registers[i].name,value:registers[i].value,frequency:registers[i].frequencyMS});
+			var val = Encoding.toNumber(registers[i].encoding,registers[i].value);
+			regs.push({name:registers[i].name,value:val,frequency:registers[i].frequencyMS});
 		}
 		return regs;
 	};
