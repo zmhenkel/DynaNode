@@ -11,8 +11,11 @@
  *		- listRegisters				[[{name,value,frequency}...{}]]
  *		- getRegister				{decodedValue,rawValue,encoding,frequency}
  *		- setRegisterValue			[regName] [encodedValue]
+ *		- cueReadRegister			[regName]
+ *		- setRegisterValueReliable	[regName] [value] [callBack]
  *		- setRegisterRefreshRate
  *		- getNetworkName			{comPortName}
+ *		- getMotorProfile			{motorProfile}
  *		- terminate
  *	
  *	USAGE: 	Subscribe to event "valueUpdated" to receive motor updates
@@ -27,6 +30,7 @@ var path = require("path");
 var fs = require("fs");
 var Encoding = require(path.join(path.dirname(fs.realpathSync(__filename)), './Encoding'));
 var Logger = require(path.join(path.dirname(fs.realpathSync(__filename)), './Logger'));
+var MotorProfile = require(path.join(path.dirname(fs.realpathSync(__filename)), './MotorProfile'));
 
 var MotorRegister = function(name,address,bytes,frequency,encoding,value) {
 	var self = this;
@@ -44,6 +48,7 @@ var Motor = function(motorID,network,regPairs) {
 	var motorID = motorID;
 	var network = network;
 	var registers = [];
+	var modelNumber = 0;
 	
 	//Process regPairs
 	for(var i=0; i<regPairs.length; i++) {
@@ -55,6 +60,9 @@ var Motor = function(motorID,network,regPairs) {
 		var value = Encoding.toNumber(encoding,regPairs[i].value);
 		
 		registers.push(new MotorRegister(name,address,bytes,frequency,encoding,value));
+		
+		if(name === "modelNumber")
+			modelNumber = value;
 		
 	}
 	
@@ -189,10 +197,16 @@ var Motor = function(motorID,network,regPairs) {
 		return network.getName();
 	};
 	
+	this.getMotorProfile = function() {
+		return MotorProfile.getTemplate(modelNumber);
+	};
+	
 	this.terminate = function() {
 		self.emit("terminated",{});
 		registers = [];
 	};
+	
+	
 };
 
 util.inherits(Motor,events.EventEmitter);

@@ -1,8 +1,10 @@
 /*	MotorSystem.js - main entry point for DynaNode
  *	
  *	Events:
- *		- motorAdded	[Motor Object]
- *		- motorRemoved	[Motor ID]
+ *		- networkAdded		[portName]
+ *		- networkRemoved 	[portName]
+ *		- motorAdded		[Motor Object]
+ *		- motorRemoved		[Motor ID]	
  *
  *	Methods:
  *		- constructor			[baudRate] [searchFequencyMS]
@@ -13,6 +15,7 @@
  *		- removeFromBlackList	[comPortName]
  *		- getMotors				[[Motor,..,Motor]]
  *		- terminate
+ *		- scan					[start] [end]
  *
  *	SEE Motor.js for details of Motor events and methods.
  *	
@@ -73,10 +76,6 @@ var MotorSystem = function(baudRate,searchFrequencyMS) {
 							self.emit("motorRemoved",{id:d.id});
 						});
 						
-						mn.on("statUpdate",function(d) {
-							//TODO: handle stat updates
-						});
-						
 						mn.on("terminated",function(d) {
 							self.emit("networkRemoved",{name:mn.getName()});
 							for(var j=0; j<networks.length; j++) {
@@ -99,6 +98,7 @@ var MotorSystem = function(baudRate,searchFrequencyMS) {
 	
 	
 	this.init = function() {
+		clearInterval(searchThread);
 		searchThread = setInterval(searchFunction,searchFrequency);
 		return true;
 	};
@@ -148,9 +148,12 @@ var MotorSystem = function(baudRate,searchFrequencyMS) {
 	};
 	
 	this.scan = function(start,end) {
-		for(var j=0; j<networks.length; j++) {
-			for(var i=start; i<=end; i++) {
-				networks[j].scan(i);	
+		if(start<end && start>=0 && end>=0 && start<=254 && end<=254) {
+
+			for(var j=0; j<networks.length; j++) {
+				for(var i=start; i<=end; i++) {
+					networks[j].scan(i);	
+				}
 			}
 		}
 	};

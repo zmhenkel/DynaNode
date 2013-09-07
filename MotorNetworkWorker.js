@@ -1,3 +1,29 @@
+/*	MotorNetworkWorker.js
+ *	Manages individual USB2Dynamixels
+ *		- performs register reads by frequency
+ *		- pings motors upon request
+ *		- performs on demand reads / writes
+ *		- deals with corrupt / missing data 
+ *
+ *	OUTGOING MESSAGES
+ *		opened
+ *		motorAdded
+ *		motorRemoved
+ *		frequencyUpdated
+ *		valueChanged
+ *		terminated
+ *
+ *	INCOMING MESSAGES:
+ *		ping
+ *		readRegister
+ *		writeRegister
+ *		updateFrequency
+ *		shutdown
+ *		
+ */
+
+
+//Requires
 var SerialPort = require("serialport").SerialPort;
 var path = require("path");
 var fs = require("fs");
@@ -513,7 +539,6 @@ process.on("message",function(m){
 	}
 	
 	if(m.action === "readRegister") {
-		//m.address, m.motorID
 		for(var i=0; i<registers.length; i++) {
 			if(registers[i].motor.id === m.motorID && registers[i].address === m.address) {
 				registers[i].priority = true;

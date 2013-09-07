@@ -1,3 +1,15 @@
+var MotorRegister = function(name,lowerBound,upperBound,write) {
+	this.registerName = name;
+	this.lowerBound = lowerBound;
+	this.upperBound = upperBound;
+	this.canWrite = write;
+};
+
+var baseRegisters = [];
+baseRegisters.push(new MotorRegister("modelNumber",0,65535,false));
+baseRegisters.push(new MotorRegister("firmwareVersion",0,255,false));
+baseRegisters.push(new MotorRegister("id",0,254,false));
+
 var MotorProfile = function(name,resolution,ds,de) {
 	var self = this;
 	
@@ -40,9 +52,9 @@ MotorProfile.getTemplate = function(modelNumber) {
 		return MotorProfile.Templates.EX106;
 	if(modelNumber === 0x1D)
 		return MotorProfile.Templates.MX28;
-	if(modelNumber === 0x36)
+	if(modelNumber === 0x136)
 		return MotorProfile.Templates.MX64;
-	if(modelNumber === 0x40)
+	if(modelNumber === 0x140)
 		return MotorProfile.Templates.MX106;
 	if(modelNumber === 0x0A)
 		return MotorProfile.Templates.RX10;
