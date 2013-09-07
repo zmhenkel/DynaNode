@@ -22,8 +22,9 @@
  *			ms.init();
  */
 
-
-var MotorNetwork = require("./MotorNetwork");
+var path = require("path");
+var fs = require("fs");
+var MotorNetwork = require(path.join(path.dirname(fs.realpathSync(__filename)), './MotorNetwork'));
 var util = require("util");
 var events = require("events");
 
@@ -144,6 +145,14 @@ var MotorSystem = function(baudRate,searchFrequencyMS) {
 		clearInterval(searchThread);
 		for(var i=0; i<networks.length; i++)
 			networks[i].terminate();
+	};
+	
+	this.scan = function(start,end) {
+		for(var j=0; j<networks.length; j++) {
+			for(var i=start; i<=end; i++) {
+				networks[j].scan(i);	
+			}
+		}
 	};
 	
 };

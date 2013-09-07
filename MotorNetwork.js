@@ -22,12 +22,14 @@
  *	USAGE: 	Used internally by MotorSystem.js and Motor.js
  *			Static method listPorts provides list of COM ports.
  */
-var worker = "./MotorNetworkWorker2.js";
+var path = require("path");
+var fs = require("fs");
+var worker = path.join(path.dirname(fs.realpathSync(__filename)), './MotorNetworkWorker.js');
 var util = require("util");
 var events = require("events");
 var child_process = require("child_process");
 var serialport = require("serialport");
-var Motor = require("./Motor");
+var Motor = require(path.join(path.dirname(fs.realpathSync(__filename)), './Motor'));
 
 var MotorNetwork = function(portName,baudRate) {
 	var self = this;
@@ -63,7 +65,10 @@ var MotorNetwork = function(portName,baudRate) {
 	childProcess.on("message",function(m){
 		
 		if(m.action === "opened") {
-			//Nothing to do...
+			//Do an initial scan
+			for(var i=0; i<255; i++) {
+				self.scan(i);
+			}
 		}
 		
 		if(m.action === "valueUpdated") {
@@ -125,6 +130,12 @@ var MotorNetwork = function(portName,baudRate) {
 		}
 	};
 	
+	this.readRegister = function(motorID,address) {
+		if(childProcess.connected) {
+			childProcess.send({action:"readRegister",motorID:motorID,address:address});
+		}
+	};
+	
 	this.getMotors = function() {
 		return motors;
 	};
@@ -140,6 +151,12 @@ var MotorNetwork = function(portName,baudRate) {
 	
 	this.getName = function() {
 		return portName;
+	};
+	
+	this.scan = function(id) {
+		if(childProcess.connected) {
+			childProcess.send({action:"ping",motorID:id});
+		}	
 	};
 	
 };

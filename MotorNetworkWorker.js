@@ -1,127 +1,288 @@
-/*	MotorNetworkWorker.js - internal child process for
- *	monitoring Dynamixel networks and sending updates.
- *
- *
- *	NOTE: This implementation uses several internal representations
- *	of objects instead of using the descriptions from other files.
- * 	These are somewhat optimized versions to help with limiting overhead.
- */
+var SerialPort = require("serialport").SerialPort;
+var path = require("path");
+var fs = require("fs");
+var Logger = require(path.join(path.dirname(fs.realpathSync(__filename)), './Logger'));
 
-var Logger = require("./Logger");
-var now = function() {
+
+var runningBuffer = new Buffer(0,'hex');
+var registers = [];
+var motors = [];
+var pings = [];
+
+var port = null;
+var terminated = false;
+var pingBytes = new Buffer(6,'hex');
+
+var removeMotorLoop = null;
+var mainLoop = null;
+
+//Return MS since Unix Epoch
+var Now = function() {
 	return (new Date()).getTime();
 };
 
-function Register(name,address,numBytes,freq,motorid) {
-	this.name = name;
-	this.address = address;
-	this.numBytes = numBytes;
-	this.value = null;
-	this.frequency = freq;
-	this.lastQueryTime = -1*freq;
-	this.motorID = parseInt(""+motorid);
-	this.readBytes = new Buffer(8,'hex');
-	this.readBytes.writeUInt8(0xFF,0);
-	this.readBytes.writeUInt8(0xFF,1);
-	this.readBytes.writeUInt8(this.motorID,2);
-	this.readBytes.writeUInt8(0x04,3)
-	this.readBytes.writeUInt8(0x02,4);
-	this.readBytes.writeUInt8(address,5);
-	this.readBytes.writeUInt8(numBytes,6);
-	this.readBytes.writeUInt8((-1*(this.motorID+0x04+0x02+address+numBytes+1)) & 255,7)
-};
-
-function Motor(id) {
-	this.id = id;
-	this.model = null;
-	this.lastContact = now();
-	this.waitingThread = null;
-	this.readRegisters = [];
-	this.pendingRead = null;
-};
-
-var SerialPort = require("serialport").SerialPort;
-var port = null;
-var runningBuffer = new Buffer(0,'hex');
-var pingLoop = null;
-var statLoop = null;
-var motors = [];
-var registers = [];
-var terminated = false;
-var dataAnalysis = false;
-var requests = 0;
-var hits = 0;
-var lastSendTime = 0;
-
-var blockingRegister = null;
-var timeoutThread = null;
-var motorRemoveThread = null;
-
-var pingBytes = new Buffer(6);
-pingBytes.writeUInt8(0xFF,0);
-pingBytes.writeUInt8(0xFF,1);
-pingBytes.writeUInt8(0xFE,2);
-pingBytes.writeUInt8(0x02,3);
-pingBytes.writeUInt8(0x01,4);
-pingBytes.writeUInt8((-1*(0xFE+0x02+0x01+1)) & 255,5);
-
-
-
-
-
-
-var Shutdown = function() {
-	terminated = true;
-	motors = [];
-	try {
-		clearInterval(motorRemoveThread);
-		clearInterval(timeoutThread);
-		clearInterval(pingLoop);
-		clearInterval(statLoop);
-		
-		if(port !==null)
-			port.close();
-		
-		
-	} catch(err){
-		//console.log(err);
-	}
-	
-	Send({action:"terminated"});
-	process.exit(0);	
-};
-
+//Send To Connected Process
 var Send = function(msg) {
 	if(process.connected) {
 		process.send(msg);
 	}
 };
 
-var writePort = function(msg) {
-	var td = now() - lastSendTime;
-	while(td < 4) {
-		td = now() - lastSendTime;	
-	}
+//Write to Serial Port
+var Write = function(msg) {
 	port.write(msg);
-	lastSendTime = now();
+};
+
+
+var Shutdown = function() {
+	Logger.log("Shutdown invoked on "+port.path);
+	terminated = true;
+	registers = [];
+	motors = [];
+	try {
+		clearInterval(removeMotorLoop);
+		clearInterval(mainLoop);
+		if(port !== null)
+			port.close();
+	} catch(err){
+		Logger.log("Exception Closing Port on "+port.path);
+	}
+	Send({action:"terminated"});
+	process.exit(0);
 }
 
-statLoop = setInterval(function() {
-	Send({action:"statUpdate",requests:requests,hits:hits});
-},5000);
+function Register(name,address,numBytes,freq,motor) {
+	this.name = name;
+	this.address = address;
+	this.numBytes = numBytes;
+	this.value = null;
+	this.frequency = freq;
+	this.priority = false;
+	this.lastReadTime = -.7*freq;
+	this.motor = motor;
+	this.readBytes = new Buffer(8,'hex');
+	this.readBytes.writeUInt8(0xFF,0);
+	this.readBytes.writeUInt8(0xFF,1);
+	this.readBytes.writeUInt8(motor.id,2);
+	this.readBytes.writeUInt8(0x04,3)
+	this.readBytes.writeUInt8(0x02,4);
+	this.readBytes.writeUInt8(address,5);
+	this.readBytes.writeUInt8(numBytes,6);
+	this.readBytes.writeUInt8((~(motor.id+0x04+0x02+address+numBytes)) & 255,7)
+};
 
-var mout = false;
-motorRemoveThread = setInterval(function(){
+function Motor(id) {
+	this.id = id;
+	this.lastContact = Now();
+	this.model = null;
+};
+
+var getRegisters = function(modelNumber,motor) {
+	var regs = [];
 	
+	//Base Registers
+	regs.push(new Register("firmwareVersion",0x02,1,86400000,motor));
+	regs.push(new Register("baudRate",0x04,1,86400000,motor));
+	regs.push(new Register("returnDelayTime",0x05,1,86400000,motor));
+	regs.push(new Register("cwAngleLimit",0x06,2,86400000,motor));
+	regs.push(new Register("ccwAngleLimit",0x08,2,86400000,motor));
+	regs.push(new Register("highTempLimit",0x0B,1,86400000,motor));
+	regs.push(new Register("lowVoltageLimit",0x0C,1,86400000,motor));
+	regs.push(new Register("highVoltageLimit",0x0D,1,86400000,motor));
+	regs.push(new Register("maxTorque",0x0E,2,86400000,motor));
+	regs.push(new Register("statusReturnLevel",0x10,1,86400000,motor));
+	regs.push(new Register("alarmLED",0x11,1,500,motor));
+	regs.push(new Register("alarmShutdown",0x12,1,500,motor));
+	regs.push(new Register("torqueEnable",0x18,1,100,motor));
+	regs.push(new Register("led",0x19,1,100,motor));
+	regs.push(new Register("cwComplianceMargin",0x1A,1,86400000,motor));
+	regs.push(new Register("ccwComplianceMargin",0x1B,1,86400000,motor));
+	regs.push(new Register("cwComplianceSlope",0x1C,1,86400000,motor));
+	regs.push(new Register("ccwComplianceSlope",0x1D,1,86400000,motor));
+	regs.push(new Register("goalPosition",0x1E,2,100,motor));
+	regs.push(new Register("movingSpeed",0x20,2,100,motor));
+	regs.push(new Register("torqueLimit",0x22,2,86400000,motor));
+	regs.push(new Register("presentPosition",0x24,2,16,motor));
+	regs.push(new Register("presentSpeed",0x26,2,16,motor));
+	regs.push(new Register("presentLoad",0x28,2,16,motor));
+	regs.push(new Register("presentVoltage",0x2A,1,250,motor));
+	regs.push(new Register("presentTemp",0x2B,1,250,motor));
+	regs.push(new Register("registered",0x2C,1,86400000,motor));
+	regs.push(new Register("moving",0x2E,1,100,motor));
+	regs.push(new Register("lock",0x2F,1,86400000,motor));
+	regs.push(new Register("punch",0x30,2,86400000,motor));
+	
+	//AX,DX, RX Series -- Standard Table
+	
+	//EX-106
+	if( modelNumber === 0x6B) {
+		regs.push(new Register("driveMode",0x0A,1,86400000,motor));
+		regs.push(new Register("sensedCurrent",0x38,2,86400000,motor));
+	}
+	
+	//MX Series
+	if(modelNumber === 0x1D || modelNumber === 0x136 || modelNumber === 0x140) {
+		//Add PID
+		regs[16] = new Register("dGain",0x1A,1,86400000,motor);
+		regs[17] = new Register("iGain",0x1B,1,86400000,motor);
+		regs[18] = new Register("pGain",0x1C,1,86400000,motor);
+		regs.splice(19,1);
+		regs.push(new Register("goalAcceleration",0x49,1,86400000,motor));
+	}
+	
+	//MX-64 / MX-106
+	if(modelNumber === 0x136 || modelNumber === 0x140) {
+		regs.push(new Register("current",0x44,2,86400000,motor));
+		regs.push(new Register("torqueControlEnable",0x46,1,86400000,motor));
+		regs.push(new Register("goalTorque",0x47,2,86400000,motor));
+	}
+	
+	return regs;
+};
+
+var getPacketsFromBuffer = function() {
+	//0xFF 0xFF ID LENGTH ERROR PARAMS CHECKSUM
+	//IF LENGTH == 0 -> Status Packet
+	var packets = [];
+	
+	while(4 < runningBuffer.length) {
+		if(runningBuffer[0] !== 0xFF || runningBuffer[1] !== 0xFF) {
+			//Not 0xFF 0xFF, Remove 1 and try again
+			var nb = new Buffer(runningBuffer.length-1,'hex');
+			runningBuffer.copy(nb,0,1,runningBuffer.length);
+			runningBuffer = nb;
+			continue;
+		} else {
+			var id = runningBuffer[2];
+			var length = runningBuffer[3];
+
+			//If the buffer is too long, remove a starting byte and try again
+			//If the dynamixel id is out of range, remove a byte and replay
+			if(length > 16 || id>254 || id <1) {
+				var nb = new Buffer(runningBuffer.length-1,'hex');
+				runningBuffer.copy(nb,0,1,runningBuffer.length);
+				runningBuffer = nb;
+				continue;
+			} else if(4+length > runningBuffer.length) {
+				//The packet hasn't fully arrived yet... we'll be back on next data event.
+				break;
+			} else {
+				//The Buffer is structurally OK, copy it and place in packets
+				var buff = new Buffer(4+length,'hex');
+				runningBuffer.copy(buff,0,0,4+length);
+				packets.push(buff);
+				
+				//Remove The bytes we used from the running buffer
+				var nb = new Buffer(runningBuffer.length-(4+length),'hex');
+				runningBuffer.copy(nb,0,(4+length),runningBuffer.length);
+				runningBuffer = nb;
+			}
+		}	
+	}
+	return packets;
+};
+
+
+var appendIncomingToBuffer = function(inData) {
+	//Concat inData to running buffer
+	var b = new Buffer(inData,'hex');
+	var nb = Buffer.concat([runningBuffer,b]);
+	runningBuffer = nb;
+};
+
+var pendingRegisterRead = null;
+var pinging = null;
+var readTimeout = null;
+
+var createTimeout = function(ts) {
+	var time = 16;
+	if(pinging !== null)
+		time = 8;
+
+	readTimeout = setTimeout(function(){
+		if(pinging !== null) {
+			pinging = null;
+		} else if(pendingRegisterRead !== null && pendingRegisterRead.ts === ts) {
+			Logger.log("Timeout: "+pendingRegisterRead.motor.id+"/"+pendingRegisterRead.name);
+			pendingRegisterRead = null;
+		}	
+	},time);	
+};
+
+var refetch = function() {
+	if(pinging === null) {
+		clearTimeout(readTimeout);
+		if(pendingRegisterRead !== null) {
+			pendingRegisterRead.lastReadTime = Now();
+			Logger.log("Refetch Issued: "+pendingRegisterRead.motor.id+"/"+pendingRegisterRead.name);
+		}
+		pendingRegisterRead = null;	
+	}
+};
+
+var executePing = function(id) {
+	pingBytes.writeUInt8(0xFF,0);
+	pingBytes.writeUInt8(0xFF,1);
+	pingBytes.writeUInt8(id,2);
+	pingBytes.writeUInt8(0x02,3);
+	pingBytes.writeUInt8(0x01,4);
+	pingBytes.writeUInt8((~(id+0x02+0x01)) & 255,5);
+	Write(pingBytes);
+};
+
+mainLoop = setInterval(function(){
+	if(!terminated) {
+		if(pendingRegisterRead === null && pinging === null) {
+			
+			//First Check for Pings
+			if(pings.length > 0) {
+				pinging = pings[0];
+				pings.splice(0,1);
+				executePing(pinging);
+				createTimeout(Now());
+				return;
+			}
+			
+			//Next Check for Priorities
+			for(var i=0; i<registers.length; i++) {
+				if(registers[i].priority === true) {
+					pendingRegisterRead = registers[i];
+					pendingRegisterRead.ts = Now();
+					createTimeout(pendingRegisterRead.ts);
+					Write(pendingRegisterRead.readBytes);
+					return;
+				}
+			}
+			
+			//Sort
+			registers.sort(function(a,b){
+				var aNQ = a.lastReadTime + a.frequency;
+				var bNQ = b.lastReadTime + b.frequency;
+				return aNQ - bNQ;
+			});
+			
+			if(registers.length >0) {
+				pendingRegisterRead = registers[0];
+				pendingRegisterRead.ts = Now();
+				createTimeout(pendingRegisterRead.ts);
+				Write(pendingRegisterRead.readBytes);
+			}
+		
+		}
+	}	
+},4);
+
+
+removeMotorLoop = setInterval(function(){
 	for(var i=0; i<motors.length; i++) {
-		var currentTime = now();
-		if( (currentTime - motors[i].lastContact) > 1000) {
+		var currentTime = Now();
+		if(motors.model !== null && (currentTime - motors[i].lastContact) > 1000) {
 			mout = true;
 			var motorID = motors[i].id;
 			
 			//Remove All Registers
 			for(var j=0; j<registers.length; j++) {
-				if(registers[j].motorID === motorID) {
+				if(registers[j].motor.id === motorID) {
 					registers.splice(j,1);
 					j--;
 				}
@@ -137,293 +298,47 @@ motorRemoveThread = setInterval(function(){
 			
 			//Trigger Event
 			Send({action:"motorRemoved",motor:motorID});
+			Logger.log("Removed Motor: "+motorID);
 		}
 	}	
 },1000);
-
-
-var removeBufferGarbage = function(buff) {
-	var startIndex = -1;
-	for(var i=0; i<buff.length; i++) {
-		if(buff[i] === 0xFF && i+1 >= buff.length) {
-			startIndex = i;
-			break;
-		}
-	
-		if(i+1 < buff.length && buff[i] === 0xFF && buff[i+1]===0xFF) {
-			startIndex = i;
-			break;
-		}
-	}
-	
-	if(startIndex >= 0) {
-		var retb = new Buffer(buff.length-startIndex,'hex');
-		buff.copy(retb,0,startIndex);
-		return retb;
-	} else {
-		return new Buffer(0,'hex');
-	}
-};
-
-var extractPacket = function(buff) {
-
-	runningBuffer = removeBufferGarbage(runningBuffer);
-	if(runningBuffer.length < 6) {
-		return null;
-	}
-
-	//3+len+1 =
-	//var len = (5+ (buff[3] - 2));
-	var len = 3 + runningBuffer[3] +1;
-	if(len > 16) {
-		Logger.log("> 16 length!");
-		Logger.log(runningBuffer.toString('hex')+" .. "+runningBuffer.length);
-		var nb = new Buffer(runningBuffer.length-1,'hex');
-		runningBuffer.copy(nb,0,1,runningBuffer.length);
-		runningBuffer = nb;
-		runningBuffer = removeBufferGarbage(runningBuffer);		
-		return extractPacket(runningBuffer);
-	}
-	
-	if(runningBuffer.length < len) {
-		return null;
-	}
-	
-	
-	
-	var retb = new Buffer(len,'hex');
-	runningBuffer.copy(retb,0,0,len);
-	
-	var nrb = new Buffer(runningBuffer.length-retb.length);
-	runningBuffer.copy(nrb,0,retb.length,runningBuffer.length);
-	runningBuffer = nrb;
-	
-	return retb;	
-};
-
-function createTimeout(register) {
-	timeoutThread = setTimeout(function(){
-		if(blockingRegister === register) {
-			blockingRegister.lastQueryTime = -.5*blockingRegister.frequency;
-			blockingRegister = null;
-			mainLoop();
-		}
-	},32);
-};
-
-var prevWrite = "";
-var mainLoop = function() {
-	
-	if(blockingRegister !== null)
-		return;
-		
-	//Sort Registers
-	registers.sort(function(a,b){
-		var aNQ = a.lastQueryTime + a.frequency;
-		var bNQ = b.lastQueryTime + b.frequency;
-		return aNQ - bNQ;
-	});
-	
-	if(registers.length >0 && blockingRegister === null) {
-		requests++;
-		blockingRegister = registers[0];
-		//console.log(blockingRegister.motorID+":"+blockingRegister.name)
-		prevWrite = "WRITE: "+blockingRegister.readBytes.toString('hex');
-		writePort(blockingRegister.readBytes);
-		clearTimeout(timeoutThread);
-		createTimeout(registers[0]);
-	}
-};
-
-var getRegisters = function(modelNumber,motorid) {
-	var regs = [];
-	
-	//Base Registers
-	regs.push(new Register("firmwareVersion",0x02,1,86400000,motorid));
-	regs.push(new Register("baudRate",0x04,1,86400000,motorid));
-	regs.push(new Register("returnDelayTime",0x05,1,86400000,motorid));
-	regs.push(new Register("cwAngleLimit",0x06,2,86400000,motorid));
-	regs.push(new Register("ccwAngleLimit",0x08,2,86400000,motorid));
-	regs.push(new Register("highTempLimit",0x0B,1,86400000,motorid));
-	regs.push(new Register("lowVoltageLimit",0x0C,1,86400000,motorid));
-	regs.push(new Register("highVoltageLimit",0x0D,1,86400000,motorid));
-	regs.push(new Register("maxTorque",0x0E,2,86400000,motorid));
-	regs.push(new Register("statusReturnLevel",0x10,1,86400000,motorid));
-	regs.push(new Register("alarmLED",0x11,1,500,motorid));
-	regs.push(new Register("alarmShutdown",0x12,1,500,motorid));
-	regs.push(new Register("torqueEnable",0x18,1,86400000,motorid));
-	regs.push(new Register("led",0x19,1,86400000,motorid));
-	regs.push(new Register("cwComplianceMargin",0x1A,1,86400000,motorid));
-	regs.push(new Register("ccwComplianceMargin",0x1B,1,86400000,motorid));
-	regs.push(new Register("cwComplianceSlope",0x1C,1,86400000,motorid));
-	regs.push(new Register("ccwComplianceSlope",0x1D,1,86400000,motorid));
-	regs.push(new Register("goalPosition",0x1E,2,86400000,motorid));
-	regs.push(new Register("movingSpeed",0x20,2,86400000,motorid));
-	regs.push(new Register("torqueLimit",0x22,2,86400000,motorid));
-	regs.push(new Register("presentPosition",0x24,2,16,motorid));
-	regs.push(new Register("presentSpeed",0x26,2,16,motorid));
-	regs.push(new Register("presentLoad",0x28,2,16,motorid));
-	regs.push(new Register("presentVoltage",0x2A,1,250,motorid));
-	regs.push(new Register("presentTemp",0x2B,1,250,motorid));
-	regs.push(new Register("registered",0x2C,1,86400000,motorid));
-	regs.push(new Register("moving",0x2E,1,86400000,motorid));
-	regs.push(new Register("lock",0x2F,1,86400000,motorid));
-	regs.push(new Register("punch",0x30,2,86400000,motorid));
-	
-	//AX,DX, RX Series -- Standard Table
-	
-	//EX-106
-	if( modelNumber === 0x6B) {
-		regs.push(new Register("driveMode",0x0A,1,86400000,motorid));
-		regs.push(new Register("sensedCurrent",0x38,2,86400000,motorid));
-	}
-	
-	//MX Series
-	if(modelNumber === 0x1D || modelNumber === 0x36 || modelNumber === 0x40) {
-		//Add PID
-		regs[16] = new Register("dGain",0x1A,1,86400000,motorid);
-		regs[17] = new Register("iGain",0x1B,1,86400000,motorid);
-		regs[18] = new Register("pGain",0x1C,1,86400000,motorid);
-		regs.splice(19,1);
-		regs.push(new Register("goalAcceleration",0x49,1,86400000,motorid));
-	}
-	
-	//MX-64 / MX-106
-	if(modelNumber === 0x36 || modelNumber === 0x40) {
-		regs.push(new Register("current",0x44,2,86400000,motorid));
-		regs.push(new Register("torqueControlEnable",0x46,1,86400000,motorid));
-		regs.push(new Register("goalTorque",0x47,2,86400000,motorid));
-	}
-	
-	return regs;
-};
 
 
 process.on("message",function(m){
 	
 	//On Initialization Message:
 	if(m.action === "init") {
-	
-		//Create a serial port
 		port = new SerialPort(m.portName,{baudRate:m.baudRate});
-		
-		//Port Events:
 		
 		port.on("open",function(){
 			Send({action:"opened"});
-			
-			//Start Ping Loop
-			pingLoop = setInterval(function(){
-				//Look For Motors
-				if(port!== null) {
-					writePort(pingBytes);
-				}
-			},1000);
-			
+			Logger.log("Port Opened");
 		});
 		
 		port.on("data",function(d){
-			dataAnalysis = true;
-			var b = new Buffer(d,'hex');
-			
-			
-			//Concat To Buffer
-			runningBuffer = Buffer.concat([runningBuffer,b]);
-			
-			
-			//Remove Garbage From Buffer
-			//runningBuffer = removeBufferGarbage(runningBuffer);
-			//While Packets(Extract Packet From Buffer)
-			var packet = extractPacket(runningBuffer);
-			
-			while(packet !== null) {
+			appendIncomingToBuffer(d);
+			var packets = getPacketsFromBuffer();
+			for(var j=0; j<packets.length; j++) {
 				
-				//Handle PING Responses
-				if(packet.length === 6) {
-					
-					//Status Response Packet
-					if(packet[3] === 0x00) {
-						console.log("status return packet");
-						packet = extractPacket(runningBuffer);
-						continue;
-					}
-					
-					
-					var theID = packet[2];
-					var exist = false;
-					var existing = null;
-					for(var i=0; i<motors.length; i++) {
-						if(motors[i].id === theID) {
-							exist = true;
-							existing = motors[i];
-							motors[i].lastContact = now();
-							break;
-						}
-					}
-					
-					if(mout)
-						Logger.log("ping response - "+theID);
-					
-					if(!exist) {
-						if(theID > 254 || theID<1) {
-							packet = extractPacket(runningBuffer);
-							continue;
-						}
-					
-						Logger.log("***** NEW MOTOR ******"+theID);
-						//Add Motor + Notify
-						var mtr = new Motor(theID);
-						motors.push(mtr);
-						
-						
-						//Get Motor Model
-						var mmr = new Register("modelNumber",0x00,2,86400000,theID);
-						mtr.lastContact = now();
-						mtr.readRegisters.push(mmr);
-						registers.push(mmr);
-						mainLoop();
-						
-						Send({action:"motorEncountered",motor:theID});
-						
-					} else {
-						if(mout) {
-							Logger.log("already exists? "+theID+" wmodel: "+existing.model);
-							Logger.log(prevWrite);
-							}				
-					}
-					mainLoop();
+				var p = packets[j];
+
+				//Unknown Response (Packet Size < 6)
+				if(p.length < 6) {
+					Logger.log("Unknown Packet Size <6: "+p.toString('hex'));
 				}
 				
-				//Handle Data Responses
-				if(packet.length > 6) {
-				
-					var indx = 2;
-					var rsum = 0;
-					var id = packet.readUInt8(indx++);
-					rsum += id;
-					var len = packet.readUInt8(indx++)-2;
-					rsum += len + 2;
-					var error = packet.readUInt8(indx++);
+				//PING / STATUS Responses (Packet Size = 6)
+				if(p.length === 6) {
+					var id = p[2];
+					var len = p[3];
+					var err = p[4];
+					var cs = p[5];
 					
-					var data = 0;
-					if(len==1) {
-						data = packet.readUInt8(indx++);
-						rsum += data;
-					}
-					if(len==2) {
-						data = packet.readUInt16LE(indx);
-						rsum += packet[indx];
-						rsum += packet[indx+1];
-						indx+=2;
-					}
+					var rs = (-1*(id+len+1)) & 255;
 					
-					rsum = (-1*(rsum+1)) & 255;
-					var checksum = packet.readUInt8(indx++);
-					
-					if(checksum === rsum) {
-						hits++;
-						blockingRegister.lastQueryTime = now();
-						//Valid Data
+					//Validate CheckSum
+					if(rs === cs) {
+						pinging = null;
 						var mtr = null;
 						for(var i=0; i<motors.length; i++) {
 							if(motors[i].id === id) {
@@ -432,41 +347,86 @@ process.on("message",function(m){
 							}
 						}
 						
-						if(mtr !== null) {
+						if(mtr!== null && mtr.model === null) {
+							mtr.lastContact = Now();
+						}
+						
+						if(mtr=== null) {
+							//Add Motor To Motors
+							var m = new Motor(id);
+							motors.push(m);
 							
-							if(mtr.id !== blockingRegister.motorID) {
-								Logger.log("ids don't match - expecting:"+blockingRegister.motorID);
-								Logger.log(packet.toString('hex'));
-								Logger.log(prevWrite);
-							}
-							
-							var currentRead = blockingRegister;
-							
-							clearTimeout(timeoutThread);
-							var address = currentRead.address;
-							var name = currentRead.name;
-							mtr.pendingRead = null;
-							blockingRegister = null;
-							mtr.lastContact = now();
-							
-							if(mtr.model!==null && currentRead.value !== data) {
-								currentRead.value = data;
-								Send({action:"valueUpdated",motor:id,name:name,value:data});
-							} 
-							
-							//If it's the motor model, load in template
-							if(address === 0x00 && mtr.model=== null) {
-								//Load The Template
-								currentRead.value = data;
-								mtr.readRegisters = getRegisters(data,id);
+							//Add Model To Register Search
+							Logger.log("Acquiring Details for "+m.id);
+							registers.push(new Register("modelNumber",0x00,2,86400000,m));
+						}
+						
+					} else {
+						Logger.log("Invalid Status Packet: "+p.toString('hex'));
+					}
+				}
+				
+				//READ Responses (Packet Size > 6)
+				if(p.length > 6) {
+					if(pendingRegisterRead === null) {
+						Logger.log("Unexpected Packet!");
+						continue;
+					}
+				
+					var rs = 0;
+					var indx = 2;
+					var id = p[indx++];
+					rs+= id;
+					var len = p[indx++];
+					rs+=len;
+					var err = p[indx++];
+					
+					var data = 0;
+					if(len-2 === 1) {
+						data = p.readUInt8(indx++);
+						rs+= data;
+					}
+					if(len-2 === 2 && indx+1<p.length) {
+						data = p.readUInt16LE(indx);
+						rs+= p[indx];
+						rs+= p[indx+1];
+						indx+=2;
+					}
+					var cs = 0;
+					if(indx < p.length) {
+						cs = p[indx];
+					}
+					
+					rs = (-1*(rs+1)) & 255;
+					
+					if(cs === rs) {
+						//VALID Read Packet
+						
+						//Verify Sender
+						if(id !== pendingRegisterRead.motor.id) {
+							Logger.log("Packet does not match expected sender: "+p.toString('hex'));
+							refetch();
+						} else {
+							//Clear The Block
+							pendingRegisterRead.lastReadTime = Now();
+							pendingRegisterRead.motor.lastContact = Now();
+							pendingRegisterRead.priority = false;
+							var read = pendingRegisterRead;
+							clearTimeout(readTimeout);
+							pendingRegisterRead = null;
+						
+							//Check if it's a load for registers
+							if(read.address === 0x00 && read.motor.model===null) {
+								//Load up the registers for this motor, send notice
+								read.value = data;
+								var regs = getRegisters(data,read.motor);
+								var rr = registers.concat(regs);
+								registers = rr;
+								read.motor.model = data;
 								
-								
-								var rr = registers.concat(mtr.readRegisters);
-								registers = rr;	
-								mtr.model = data;
 								var regNames = [];
 								for(var i=0; i<registers.length; i++) {
-									if(registers[i].motorID === id) {
+									if(registers[i].motor.id === id) {
 										regNames.push({	name:registers[i].name,
 														address:registers[i].address,
 														bytes:registers[i].numBytes,
@@ -474,39 +434,28 @@ process.on("message",function(m){
 														value:registers[i].value});
 									}
 								}
-								
 								Send({action:"motorAdded",motor:id,registers:regNames});
+								Logger.log("Motor Added: "+id);
+								
+							} else {
+								//Just a regular update
+								if(read.value !== data) {
+									read.value = data;
+									Send({action:"valueUpdated",motor:id,name:read.name,value:data});
+								}
 							}
-							
-							//Process Next Read
-							mainLoop();
-						} else {
-						
-							Logger.log("motor is null!");
-							blockingRegister.lastQueryTime = -1*blockingRegister.frequency;
-							clearTimeout(timeoutThread);
-							blockingRegister = null;
-							mainLoop();
 						}
-						
-						
 					} else {
-						Logger.log("INVALID!");
-						Logger.log(packet.toString('hex')+" expect "+rsum);
-						//INVALID
-						//console.log("invalid!");
-						blockingRegister.lastQueryTime = -1*blockingRegister.frequency;
-						clearTimeout(timeoutThread);
-						blockingRegister = null;
-						mainLoop();
-					}
-				
+						//Invalid Packet
+						Logger.log("Invalid Packet by Checksum: "+p.toString('hex')+" "+rs+"/"+cs);
+						refetch();
+					}	
 				}
 				
-				packet = extractPacket(runningBuffer);
+					
 			}
-			mainLoop();	
 		});
+		
 		
 		port.on("error",function(){
 			if(!terminated)
@@ -523,22 +472,6 @@ process.on("message",function(m){
 				Shutdown();
 		});
 		
-	}
-	
-	if(m.action === "shutdown") {
-		Shutdown();
-	}
-	
-	if(m.action === "updateReadFrequency") {
-		//motorID, registerAddress, newFrequency
-		for(var i=0; i<registers.length; i++) {
-			if(registers[i].motorID === m.motorID && registers[i].address === m.address) {
-				registers[i].frequency = m.frequency;
-				registers[i].lastQueryTime = 0;
-				Send({action:"frequncyUpdated",motor:m.motorID,name:registers[i].name,frequency:m.frequency});
-				break;
-			}
-		}
 	}
 	
 	if(m.action === "writeRegister") {
@@ -564,25 +497,42 @@ process.on("message",function(m){
 		buff.writeUInt8((-1*(m.motorID+3+m.numBytes+0x03+m.address+data+1)) & 255,indx++);
 		
 		if(port!==null) {
-			writePort(buff);
+			Write(buff);
 		}
-		
-		var mtr = null;
-		for(var i=0; i< motors.length; i++) {
-			if(motors[i].id === m.motorID) {
-				mtr = motors[i];
-			}
-		}
-		
-		if(mtr !== null) {
-			var reg = null;
-			for(var i=0; i<mtr.readRegisters.length; i++) {
-				if(mtr.readRegisters[i].address === m.address) {
-					mtr.readRegisters[i].lastQueryTime = 0;
-					break;
-				}
-			}
-		}
-		
 	}
+	
+	if(m.action === "updateFrequency") {
+		for(var i=0; i<registers.length; i++) {
+			if(registers[i].motor.id === m.motorID && registers[i].address === m.address) {
+				registers[i].frequency = m.frequency;
+				registers[i].lastQueryTime = 0;
+				Send({action:"frequncyUpdated",motor:m.motorID,name:registers[i].name,frequency:m.frequency});
+				break;
+			}
+		}
+	}
+	
+	if(m.action === "readRegister") {
+		//m.address, m.motorID
+		for(var i=0; i<registers.length; i++) {
+			if(registers[i].motor.id === m.motorID && registers[i].address === m.address) {
+				registers[i].priority = true;
+				break;
+			}
+		}
+	}
+	
+	if(m.action === "ping") {
+		pings.push(m.motorID);
+	}
+	
+	if(m.action === "shutdown") {
+		if(!terminated)
+			Shutdown();
+	}
+	
+	
 });
+
+
+

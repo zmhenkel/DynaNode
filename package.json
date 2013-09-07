@@ -1,6 +1,6 @@
 {
 	"name" : "dynanode",
-	"version" : "0.0.5",
+	"version" : "0.0.6",
 	"author" : "Zachary Henkel",
 	"description" : "Node.js library for Dynamixel motors",
 	"keywords" : ["Dynamixel","Robotics","Servos"],

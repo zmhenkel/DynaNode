@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>DynaNode - Web Test</title>
+<script src="http://127.0.0.1:8001/socket.io/socket.io.js"></script>
+<script src="http://127.0.0.1:8001/jquery.js"></script>
+<style type="text/css">
+.motor {
+	float:left;
+	margin-left:10px;
+}
+</style>
+</head>
+
+<body>
+	<div id="motors">
+	</div>
+</body>
+<script type="text/javascript">
+	var socket = io.connect('http://127.0.0.1:8001');
+	
+	function send(mid,reg,val) {
+		socket.emit("updateRegister",{motor:mid,register:reg,value:val});
+	};
+	
+	socket.on("addMotor",function(d){
+		console.log("add motor - "+d.id);
+		$("#motors").append('<div class="motor" id="motor'+d.id+'"><div>Motor '+d.id+'</div></div>');
+	});
+	
+	socket.on("removeMotor",function(d){
+		console.log("remove motor - "+d.id);
+		$("#motor"+d.id).remove();
+	});
+	
+	socket.on("addRegisters",function(d){
+		for(var i=0; i<d.registers.length; i++) {
+			$("#motor"+d.id).append('<div id="m'+d.id+'r'+d.registers[i].name+'">'+d.registers[i].name+':'+d.registers[i].value+'</div>');
+		}
+		//console.log("add registers - "+d.id+" : "+d.registers.length);
+	});
+	
+	socket.on("valueUpdated",function(d){
+		$("#m"+d.id+"r"+d.register).html(d.register+': '+d.value);
+		if(d.register === "presentVoltage")
+		console.log("value updated - "+d.id+"/"+d.register+": "+d.value);
+	});
+
+
+</script>
+</html>

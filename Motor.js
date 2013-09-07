@@ -23,7 +23,10 @@
 
 var util = require("util");
 var events = require("events");
-var Encoding = require("./Encoding");
+var path = require("path");
+var fs = require("fs");
+var Encoding = require(path.join(path.dirname(fs.realpathSync(__filename)), './Encoding'));
+var Logger = require(path.join(path.dirname(fs.realpathSync(__filename)), './Logger'));
 
 var MotorRegister = function(name,address,bytes,frequency,encoding,value) {
 	var self = this;
@@ -79,6 +82,7 @@ var Motor = function(motorID,network,regPairs) {
 	
 	network.on("terminated",function(d){
 		self.emit("terminated",{});
+		Logger.log("Motor Terminated: "+motorID);
 		registers = [];
 	});
 	
@@ -108,6 +112,17 @@ var Motor = function(motorID,network,regPairs) {
 		return {};
 	};
 	
+	this.cueReadRegister = function(regName) {
+		for(var i=0; i<registers.length; i++) {
+			if(registers[i].name === regName) {
+				if(network !== null) {
+					network.readRegister(motorID,registers[i].address);
+				}
+				break;
+			};
+		}
+	};
+	
 	this.setRegisterValue = function(regName,value) {
 		//Tell the network to update the register
 		var address = null;
@@ -126,6 +141,30 @@ var Motor = function(motorID,network,regPairs) {
 			return false;
 		}
 	};
+	
+	this.setRegisterValueReliable = function(regName,value,callBack) {
+		var register = null;
+		for(var i=0; i<registers.length; i++) {
+			if(registers[i].name === regName) {
+				register = registers[i];
+				break;
+			}
+		}
+		
+		if(register !== null) {
+			var setThread = setInterval(function(){
+				if(register.value === value) {
+					clearInterval(setThread);
+					if(callBack)
+						callBack();
+					return;
+				} else {
+					network.setRegister(motorID,register.name,register.numberOfBytes,value);
+				}
+			},64);
+		}
+	};
+	
 	
 	this.setRegisterRefreshRate = function(regName,frequencyMS) {
 		//Tell network to update refresh rate
