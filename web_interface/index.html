@@ -9,11 +9,50 @@
 .motor {
 	float:left;
 	margin-left:10px;
+	width:20em;
 }
+
+.motorHeader {
+	color:white;
+	background-color:#100066;
+	padding:.2em;
+}
+
+.motorRegister {
+	border-bottom:solid black thin;
+	border-left:solid black thin;
+	border-right:solid black thin;
+	margin-top:0px;
+	float:left;
+	clear:both;
+	width:20em;
+}
+
+.registerName {
+	float:left;
+	width:15em;
+	text-align:center;
+}
+
+.registerValue {
+	float:left;
+	width:5em;
+	text-align:center;
+}
+
+
 </style>
 </head>
 
 <body>
+	<div class="motor">
+    	<div class="motorHeader">comPort Name \ Motor # - MODEL</div>
+        <div class="motorRegister">
+        	<div class="registerName">Register Name</div>
+           <div class="registerValue">VALUE</div>
+        </div>
+    </div>
+
 	<div id="motors">
 	</div>
 </body>
@@ -26,7 +65,8 @@
 	
 	socket.on("addMotor",function(d){
 		console.log("add motor - "+d.id);
-		$("#motors").append('<div class="motor" id="motor'+d.id+'"><div>Motor '+d.id+'</div></div>');
+		var h = '<div class="motorHeader">'+d.network+' \ Motor '+d.id+'</div>';
+		$("#motors").append('<div class="motor" id="motor'+d.id+'">'+h+'</div></div>');
 	});
 	
 	socket.on("removeMotor",function(d){
@@ -36,15 +76,17 @@
 	
 	socket.on("addRegisters",function(d){
 		for(var i=0; i<d.registers.length; i++) {
-			$("#motor"+d.id).append('<div id="m'+d.id+'r'+d.registers[i].name+'">'+d.registers[i].name+':'+d.registers[i].value+'</div>');
+			
+			var ap = '<div class="motorRegister"><div class="registerName">'+d.registers[i].name+'</div>';
+				ap +='<div class="registerValue" id="m'+d.id+'r'+d.registers[i].name+'">';
+				ap += d.registers[i].value+'</div></div>';
+			$("#motor"+d.id).append(ap);
 		}
 		//console.log("add registers - "+d.id+" : "+d.registers.length);
 	});
 	
 	socket.on("valueUpdated",function(d){
 		$("#m"+d.id+"r"+d.register).html(d.register+': '+d.value);
-		if(d.register === "presentVoltage")
-		console.log("value updated - "+d.id+"/"+d.register+": "+d.value);
 	});
 
 

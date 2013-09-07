@@ -48,7 +48,7 @@ io.sockets.on('connection', function (socket) {
 	//On Connect: Send Motors + Registers
 	var mtrs = ms.getMotors();
 	for(var i=0; i<mtrs.length; i++) {
-		socket.emit("addMotor",{id:mtrs[i].getID()});
+		socket.emit("addMotor",{id:mtrs[i].getID(),network:mtrs[i].getNetworkName()});
 		socket.emit("addRegisters",{id:mtrs[i].getID(),registers:mtrs[i].listRegisters()});
 	}
 	
